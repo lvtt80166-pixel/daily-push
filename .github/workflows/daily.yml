@@ -1,0 +1,25 @@
+name: 每日热搜推送
+
+on:
+  schedule:
+    # 每天北京时间 08:00 (UTC 00:00)
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 允许手动点按钮测试
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载代码
+        uses: actions/checkout@v2
+
+      - name: 安装 Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.9'
+
+      - name: 安装依赖
+        run: pip install requests
+
+      - name: 开始运行
+        run: python main.py
