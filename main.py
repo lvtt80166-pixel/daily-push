@@ -5,7 +5,7 @@ from datetime import datetime
 # ==================== 👇 只要改这就行 👇 ====================
 # 1. 填入你的 Vercel 网址 (注意：结尾不要带斜杠 /)
 # 例如: "https://daily-hot-api-xxxx.vercel.app"
-API_URL = "在https://daily-hot-mu-swart.vercel.app" 
+API_URL = "https://daily-hot-mu-swart.vercel.app" 
 
 # 2. 填入你的 飞书 Webhook 地址
 # 例如: "https://open.feishu.cn/open-apis/bot/v2/hook/xxxx"
