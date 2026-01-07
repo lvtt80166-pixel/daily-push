@@ -3,104 +3,88 @@ import json
 import re
 import time
 from datetime import datetime
+from xml.etree import ElementTree
 
 # ==================== 👇 配置区域 👇 ====================
 # 你的飞书 Webhook 地址
 WEBHOOK_URL = "https://open.feishu.cn/open-apis/bot/v2/hook/f241b8ab-434f-48f4-997c-5d8437a3f9e1"
 
-# 每个平台只取前 2 名 (为了防止飞书消息过长发不出去)
-# 如果觉得不够，可以改成 3
+# 每个平台抓取数量 (建议 2-3 条，否则飞书发不出)
 TOP_N = 2
 # ========================================================
 
-def get_headers_mobile():
-    """伪装成手机，获取数据更全"""
-    return {
-        'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1'
-    }
-
-def get_headers_pc():
-    """伪装成电脑"""
+def get_headers():
     return {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0 Safari/537.36'
     }
 
-def fetch_full_content(url):
-    """
-    调用 Jina Reader 提取正文
-    """
+def fetch_content(url):
+    """利用 Jina Reader 提取正文"""
     if not url or "javascript" in url: return "无效链接"
     try:
-        # 使用 jina 读取器
-        api_url = f"https://r.jina.ai/{url}"
-        resp = requests.get(api_url, timeout=20)
+        # 加上 r.jina.ai 前缀
+        resp = requests.get(f"https://r.jina.ai/{url}", timeout=15)
         if resp.status_code == 200:
             text = resp.text
-            # 截取前 800 字，避免飞书报错
-            if len(text) > 800:
-                return text[:800] + "\n...(篇幅过长，建议复制链接给AI)..."
-            return text
+            # 截取前 600 字作为素材
+            return text[:600].replace('\n', ' ') + "..."
     except Exception:
         pass
-    return "⚠️ 正文抓取超时，请直接参考标题"
+    return "（正文抓取超时，请参考标题）"
 
-# ========== 1. 知乎热榜 (官方接口 - 稳) ==========
+# 1. 知乎热榜 (官方接口)
 def get_zhihu():
     print("🔍 正在抓取知乎...")
     data = []
     try:
+        # 直接访问知乎官方接口，不走第三方代理
         url = "https://api.zhihu.com/topstory/hot-list"
-        resp = requests.get(url, headers=get_headers_mobile(), timeout=10)
+        resp = requests.get(url, headers=get_headers(), timeout=10)
         items = resp.json().get('data', [])
         
         for item in items[:TOP_N]:
             target = item.get('target', {})
-            title = target.get('title')
-            # 构造知乎问题链接
+            title = target.get('title', '无标题')
+            # 替换为网页链接
             link = target.get('url', '').replace('api.zhihu.com/questions', 'www.zhihu.com/question')
-            
-            print(f"   正在读取: {title[:10]}...")
-            content = fetch_full_content(link)
+            print(f"   读取: {title[:10]}...")
+            content = fetch_content(link)
             data.append({"title": title, "url": link, "content": content})
     except Exception as e:
-        print(f"❌ 知乎失败: {e}")
+        print(f"❌ 知乎出错: {e}")
     return data
 
-# ========== 2. 百度热搜 (原生爬虫 - 稳) ==========
+# 2. 百度热搜 (原生爬虫)
 def get_baidu():
     print("🔍 正在抓取百度...")
     data = []
     try:
         url = "https://top.baidu.com/board?tab=realtime"
-        resp = requests.get(url, headers=get_headers_pc(), timeout=10)
-        content = resp.text
+        resp = requests.get(url, headers=get_headers(), timeout=10)
         # 正则提取标题
-        titles = re.findall(r'"word":"(.*?)",', content)
+        titles = re.findall(r'"word":"(.*?)",', resp.text)
         
         for t in titles[:TOP_N]:
-            # 百度链接比较特殊，我们直接用搜索链接
+            # 百度正文太杂，为了稳定性，我们构造搜索链接，并让 AI 直接针对标题写作
             link = f"https://www.baidu.com/s?wd={t}"
-            print(f"   正在读取: {t[:10]}...")
-            # 百度搜索页内容太杂，我们只让 AI 读标题即可，
-            # 或者尝试读取搜索结果的第一段文字，这里为了稳定性，
-            # 我们直接返回提示，因为百度热搜通常标题就是内容。
+            print(f"   读取: {t[:10]}...")
+            # 百度不抓正文，防止脚本被封 IP，直接返回提示
             data.append({
                 "title": t, 
                 "url": link, 
-                "content": "（百度热点为实时事件，请直接将标题发送给AI进行搜索）"
+                "content": "此为实时社会热点，请直接基于标题搜索写作。"
             })
     except Exception as e:
-        print(f"❌ 百度失败: {e}")
+        print(f"❌ 百度出错: {e}")
     return data
 
-# ========== 3. 36氪 (RSS - 稳) ==========
+# 3. 36氪 (RSS 订阅源)
 def get_36kr():
     print("🔍 正在抓取36氪...")
     data = []
     try:
         url = "https://36kr.com/feed"
-        resp = requests.get(url, headers=get_headers_pc(), timeout=10)
-        from xml.etree import ElementTree
+        resp = requests.get(url, headers=get_headers(), timeout=10)
         root = ElementTree.fromstring(resp.content)
         channel = root.find('channel')
         
@@ -109,8 +93,57 @@ def get_36kr():
             if count >= TOP_N: break
             title = item.find('title').text
             link = item.find('link').text
-            print(f"   正在读取: {title[:10]}...")
-            content = fetch_full_content(link)
+            print(f"   读取: {title[:10]}...")
+            content = fetch_content(link)
             data.append({"title": title, "url": link, "content": content})
             count += 1
     except Exception as e:
+        print(f"❌ 36氪出错: {e}")
+    return data
+
+def send_feishu(all_data):
+    print("🚀 正在发送...")
+    
+    # 标题必须包含 "热搜"，否则会被飞书拦截！
+    full_text = "📅 **全网热搜选题素材库**\n"
+    full_text += "可以直接复制下方内容喂给 AI：\n\n"
+    
+    has_data = False
+    for source, items in all_data.items():
+        if not items: continue
+        has_data = True
+        full_text += f"【{source}】\n{'='*20}\n"
+        for item in items:
+            full_text += f"📌 标题：{item['title']}\n"
+            full_text += f"🔗 链接：{item['url']}\n"
+            full_text += f"📝 摘要：{item['content']}\n\n"
+            
+    if not has_data:
+        print("❌ 没有任何数据，取消发送")
+        return
+
+    headers = {'Content-Type': 'application/json'}
+    # 使用 text 类型发送长文本
+    payload = {
+        "msg_type": "text",
+        "content": {
+            "text": full_text
+        }
+    }
+    
+    try:
+        r = requests.post(WEBHOOK_URL, headers=headers, data=json.dumps(payload))
+        print(f"发送结果: {r.status_code} {r.text}")
+    except Exception as e:
+        print(f"发送报错: {e}")
+
+def main():
+    final_data = {}
+    final_data["知乎热榜"] = get_zhihu()
+    final_data["36氪科技"] = get_36kr()
+    final_data["百度热搜"] = get_baidu()
+    
+    send_feishu(final_data)
+
+if __name__ == "__main__":
+    main()
